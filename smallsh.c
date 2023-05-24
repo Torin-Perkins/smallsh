@@ -6,7 +6,20 @@
 #include <unistd.h>
 #include <dirent.h>
 #include <fcntl.h>
+#include <signal.h>
+#include <sys/wait.h>
 
+//flags for signals
+int turnOffBackground = 0;
+int offFlag = 0;
+int onFlag = 0;
+
+//global variables for background process arrays
+pid_t backgroundProccessStatus[100];
+int backgroundProccessPid[100];
+int numberBackground = 0;
+
+//struct (linked list)for arguments to store multiple
 struct argument
 {
     char argument_text[2049];
@@ -14,6 +27,7 @@ struct argument
 };
 typedef struct argument Argument;
 
+//struct containing all elements of a command
 struct command
 {
     char fullCommand[2049];
@@ -26,6 +40,7 @@ struct command
 };
 typedef struct command Command;
 
+//counts the arguments in a command
 int countArgument(Argument *first)
 {
     Argument *temp = first;
@@ -38,6 +53,7 @@ int countArgument(Argument *first)
     return counter;
 }
 
+//returns a specific argument at an index
 Argument *getArgumentAtIndex(Argument *first, int index)
 {
     Argument *temp = first;
@@ -54,6 +70,7 @@ Argument *getArgumentAtIndex(Argument *first, int index)
     return temp;
 }
 
+//prints all arguments (testing only)
 void printArguments(Argument *first)
 {
     Argument *temp = first;
@@ -63,13 +80,12 @@ void printArguments(Argument *first)
         temp = temp->next;
     }
 }
+
+//checks if the value entered is a comment
 int checkComment(char command[2049])
 {
-    printf("checking comment\n");
-    fflush(stdout);
-
-    // fflush(stdout);
-    // char comment[2] = "#";
+   
+    
     if (command[0] == '#')
     {
         return 1;
@@ -80,24 +96,27 @@ int checkComment(char command[2049])
     }
 }
 
+//checks if the command entered is a built in command
 int checkBuiltInCommands(char command[2049])
 {
     char exit_command[] = "exit";
-    char cd[] = "cd\0";
-    char status[] = "status\0";
+    char cd[] = "cd";
+    char status[] = "status";
 
-    if (strcmp(command, exit_command) == 0)
+    if (strncmp(command, exit_command, 4) == 0)
     {
+        //check if it is exit
         return 0;
     }
-    else if (strcmp(command, status) == 0)
+    else if (strncmp(command, status, 6) == 0)
     {
-        printf("%d\n", getpid());
+        //check if it is status
         return 1;
     }
 
-    else if (command[0] == cd[0] && command[1] == command[1])
+    else if (command[0] == cd[0] && command[1] == cd[1])
     {
+        //check for cd
         if (strcmp(command, cd) == 0)
         {
             return 2;
@@ -114,6 +133,7 @@ int checkBuiltInCommands(char command[2049])
     }
 }
 
+//parses a command given by the user into inital command, arguments, input, output, and background
 void parseCommand(char full_command[2049], Command *newCommand)
 {
 
@@ -132,35 +152,31 @@ void parseCommand(char full_command[2049], Command *newCommand)
     Argument *head = NULL;
     Argument *tail = NULL;
 
-    printf("Parsing command of length: %d\n", strlen(full_command));
-
+    
+    // loop through every character of the command
     for (int i = 0; i <= strlen(full_command); i++)
     {
-        printf("Inting on iteration %d with char %c\n", i, full_command[i]);
-        // fflush(stdout);
-
+       
+        //stage 0 is looking for the initial command
         if (stage == 0)
         {
-            printf("Stage 0\n");
-            fflush(stdout);
+            //it will be the full command until a space is found
             if (full_command[i] != ' ')
             {
                 initialCommand[a] = full_command[i];
                 a = a + 1;
                 if (full_command[i + 1] == '\0')
                 {
-                    // printf("this is weird\n");
-
-                    printf("Ending Search: Initial Command: %s\n", initialCommand);
-                    fflush(stdout);
                     strcpy(newCommand->command, initialCommand);
                     break;
                 }
             }
             else
             {
+                // space is found -> save the initial command
                 strcpy(newCommand->command, initialCommand);
 
+                // check to see what stage to go to next
                 if((full_command[i+1] == '>' || full_command[i+1] == '<' || full_command[i+1] == '&')){
                      if (full_command[i+1] == '<')
                     {
@@ -174,22 +190,17 @@ void parseCommand(char full_command[2049], Command *newCommand)
                     {
                         stage = 4;
                     }
-                    printf("Moving to stage %d: Initial Command: %s\n", stage, initialCommand);
-
                 }
                 else{
-                    printf("Moving to stage 1: Initial Command: %s\n", initialCommand);
-                    fflush(stdout);
                     strcpy(newCommand->command, initialCommand);
                     stage += 1;
                 }
             }
         }
-
+        //stage 1 is looking for the arguments
         else if (stage == 1)
         {
-            printf("Stage 1\n");
-            fflush(stdout);
+            // the delimiter will be spaces
             if (full_command[i] != ' ')
             {
                
@@ -197,8 +208,7 @@ void parseCommand(char full_command[2049], Command *newCommand)
                 b += 1;
                 if (full_command[i + 1] == '\0')
                 {
-
-                    printf("Ending Search: Arguments Command 1: %s\n", arguments);
+                    // if we reach the end of the file, save the arguments
                     if (numArgs < 1)
                     {
 
@@ -216,15 +226,13 @@ void parseCommand(char full_command[2049], Command *newCommand)
                        
                     }
                     newCommand->first = head;
-                    printf("Is it print arguments\n");
-                    printArguments(newCommand->first);
-                    fflush(stdout);
-                    // strcpy(newCommand -> arguments, arguments);
+                    
                     break;
                 }
             }
             else
             {
+                // if we find a space, find out if the next character is the end of the file, another argument, an input, an output, or the background signal
                 if (full_command[i + 1] == '\0')
                 {
                     if (numArgs < 1)
@@ -242,16 +250,12 @@ void parseCommand(char full_command[2049], Command *newCommand)
                        
                     }
                     newCommand->first = head;
-                    printf("Ending Search: Arguments Command: %s\n", arguments);
-                    printf("Is it print arguments\n");
-                    printArguments(newCommand->first);
-                    fflush(stdout);
-                    // strcpy(newCommand -> arguments, arguments);
+                    
                     break;
                 }
                 else if (full_command[i + 1] == '>' || full_command[i + 1] == '<' || full_command[i + 1] == '&')
                 {
-                    printf("Continuing Search: Arguments Command: %s\n", arguments);
+                    // move to next stage if we find the signifier
                     if (numArgs < 1)
                     {
                         Argument *temp = malloc(sizeof(Argument));
@@ -266,9 +270,7 @@ void parseCommand(char full_command[2049], Command *newCommand)
                         
                     }
                     newCommand->first = head;
-                    printArguments(newCommand->first);
-                    fflush(stdout);
-                    // strcpy(newCommand -> arguments, arguments);
+                   
                     if (full_command[i + 1] == '<')
                     {
                         stage = 2;
@@ -284,9 +286,11 @@ void parseCommand(char full_command[2049], Command *newCommand)
                 }
                 else
                 {
+                    // move to the next argument, perserving the linked list
                     Argument *temp = malloc(sizeof(Argument));
                     strcpy(temp->argument_text, arguments);
                     b = 0;
+                    // empty the arguments character array
                     for (int j = 0; arguments[j] != NULL; j++)
                     {
                         arguments[j] = '\0';
@@ -305,10 +309,10 @@ void parseCommand(char full_command[2049], Command *newCommand)
                 }
             }
         }
+        // stage 2 is looking for inputs
         else if (stage == 2)
         {
-            printf("Stage 2\n");
-            fflush(stdout);
+            // skip the first two characters because they will be < and a space
             if (c == -2)
             {
                 c = -1;
@@ -321,32 +325,32 @@ void parseCommand(char full_command[2049], Command *newCommand)
             }
             if (full_command[i] != ' ')
             {
-                printf("Adding char %c to input\n", full_command[i]);
+                
                 input[c] = full_command[i];
                 c += 1;
                 if (full_command[i + 1] == '\0')
                 {
-                    printf("Ending Search: Input Command: %s\n", input);
+                    
                     strcpy(newCommand->input, input);
                     break;
                 }
             }
             else
             {
-                printf("Continuing Search: Input Command: %s\n", input);
+                
 
                 strcpy(newCommand->input, input);
                 if (full_command[i + 1] == '>' || full_command[i + 1] == '&')
                 {
                     if (full_command[i + 1] == '>')
                     {
-                        printf("Moving to Stage 3: Input Command: %s\n", input);
+                        
 
                         stage = 3;
                     }
                     else if (full_command[i + 1] == '&')
                     {
-                        printf("Moving to Stage 4: Input Command: %s\n", input);
+                        
 
                         stage = 4;
                     }
@@ -355,8 +359,7 @@ void parseCommand(char full_command[2049], Command *newCommand)
         }
         else if (stage == 3)
         {
-            printf("Stage 3\n");
-            fflush(stdout);
+           
             if (d == -2)
             {
                 d = -1;
@@ -373,7 +376,7 @@ void parseCommand(char full_command[2049], Command *newCommand)
                 d += 1;
                 if (full_command[i + 1] == '\0')
                 {
-                    printf("Ending Search: Output Command: %s\n", output);
+                    
 
                     strcpy(newCommand->output, output);
                     break;
@@ -386,13 +389,13 @@ void parseCommand(char full_command[2049], Command *newCommand)
                 {
                     if (full_command[i + 1] == '<')
                     {
-                        printf("Moving to Stage 2: Output Command: %s\n", output);
+                        
 
                         stage = 2;
                     }
                     else if (full_command[i + 1] == '&')
                     {
-                        printf("Moving to Stage 4: Output Command: %s\n", output);
+                        
 
                         stage = 4;
                     }
@@ -401,11 +404,10 @@ void parseCommand(char full_command[2049], Command *newCommand)
         }
         else if (stage == 4)
         {
-            printf("Stage 4\n");
-            fflush(stdout);
+           
             if (full_command[i] == '&' && full_command[i + 1] == '\0')
             {
-                printf("Background is true\n");
+                
                 newCommand->background = 1;
             }
             else
@@ -414,8 +416,8 @@ void parseCommand(char full_command[2049], Command *newCommand)
             }
         }
     }
-    printf("Loop exited\n");
-    fflush(stdout);
+    
+    
     for(int n = 0; initialCommand[n] != NULL; n++){
         initialCommand[n] = '\0';
     }
@@ -428,7 +430,11 @@ void parseCommand(char full_command[2049], Command *newCommand)
     for(int x = 0; output[x] != NULL; x++){
         output[x] = '\0';
     }
+    
 }   
+void chandler(){
+    exit(2);
+}
 
 int execute(char **argv, Command *newCommand)
 {
@@ -445,17 +451,20 @@ int execute(char **argv, Command *newCommand)
         return EXIT_FAILURE;
     }
     else if(spawnPid == 0){
+        if(turnOffBackground == 0 && newCommand ->background != 1){
+            signal(SIGINT, chandler);
+        }
+        //signal(SIGTERM, terminalHandler);
+        signal(SIGTSTP, SIG_IGN);
         //child process
          if(newCommand -> input[0] != '\0'){
-            if(newCommand -> background == 1){
-                in_fd = open("/dev/null", O_RDONLY);
-            }
-            else{
-                in_fd = open(newCommand -> input, O_RDONLY);
-            }
+            
+                
+            in_fd = open(newCommand -> input, O_RDONLY);
 
             if(in_fd == -1){
-                perror("Error opening input file");
+                printf("Error opening input file");
+                fflush(stdout);
                 return EXIT_FAILURE;
             }
 
@@ -464,68 +473,94 @@ int execute(char **argv, Command *newCommand)
                 return EXIT_FAILURE;
             }
             close(in_fd);
-            /*
-            in_fd = open(newCommand -> input, O_RDONLY);
-            if (in_fd == -1) {
-                perror("Error opening input");
+
+        }
+        else if(turnOffBackground == 0 && newCommand ->background == 1){
+            in_fd = open("/dev/null", O_RDONLY);
+            if(in_fd == -1){
+                printf("Error opening input file");
+                fflush(stdout);
                 return EXIT_FAILURE;
             }
-            if (dup2(in_fd, fileno(stdin)) == -1) {
-                perror("Error redirecting stdin");
+
+            if(dup2(in_fd, fileno(original_stdin)) == -1){
+                perror("Error redirecting input");
                 return EXIT_FAILURE;
             }
             close(in_fd);
-            */
-            
         }
+
+
         if(newCommand -> output[0] != '\0'){
-            if(newCommand -> background == 1){
-                out_fd = open("/dev/null", O_WRONLY);
-            }
-            else{
-                out_fd = open(newCommand -> output, O_WRONLY | O_CREAT | O_TRUNC, 0666);
-            }
+            
+            out_fd = open(newCommand -> output, O_WRONLY | O_CREAT | O_TRUNC, 0666);
+            
 
             if(out_fd == -1){
-                perror("Error opening the output file");
+                printf("Error opening the output file");
+                fflush(stdout);
                 return EXIT_FAILURE;
             }
 
             if(dup2(out_fd, fileno(original_stdout)) == -1){
-                perror("Error redirecting output");
+                printf("Error redirecting output");
+                fflush(stdout);
                 return EXIT_FAILURE;
             }
             close(out_fd);
-            //printf("Redirecting Output");
-            //fflush(stdout);
-            /*
-            out_fd = open(newCommand -> output, O_WRONLY | O_CREAT | O_TRUNC, 0666);
-            if (out_fd == -1) {
-                perror("Error opening output");
+            
+        }
+        else if(turnOffBackground == 0 && newCommand ->background == 1){
+            out_fd = open("/dev/null", O_WRONLY);
+            if(in_fd == -1){
+                printf("Error opening output file");
+                fflush(stdout);
+
                 return EXIT_FAILURE;
             }
-            if (dup2(out_fd, fileno(stdout)) == -1) {
-                perror("Error redirecting stdout");
+
+            if(dup2(in_fd, fileno(original_stdin)) == -1){
+                printf("Error redirecting input");
+                fflush(stdout);
                 return EXIT_FAILURE;
             }
-            close(out_fd);
-            */
+            close(in_fd);
         }
         if(execvp(*argv, argv) == -1){
             perror("execvp failed");
-            return EXIT_FAILURE;
+            if(newCommand -> input[0] != '\0'){
+                if (dup2(fileno(original_stdin), fileno(stdin)) == -1) {
+                    printf("Error restoring stdin");
+                    fflush(stdout);
+                    return EXIT_FAILURE;
+                }
+                fclose(original_stdin);
+            }
+            if(newCommand -> output[0] != '\0'){
+                if (dup2(fileno(original_stdout), fileno(stdout)) == -1) {
+                    printf("Error restoring stdout");
+                    fflush(stdout);
+                    return EXIT_FAILURE;
+                }
+                fclose(original_stdout);
+            }
+            exit(EXIT_FAILURE);
         }
         
         if(newCommand -> input[0] != '\0'){
             if (dup2(fileno(original_stdin), fileno(stdin)) == -1) {
-                perror("Error restoring stdin");
+                printf("Error restoring stdin");
+                fflush(stdout);
+
                 return EXIT_FAILURE;
             }
              fclose(original_stdin);
         }
         if(newCommand -> output[0] != '\0'){
             if (dup2(fileno(original_stdout), fileno(stdout)) == -1) {
-                perror("Error restoring stdout");
+                printf("Error restoring stdout");
+                fflush(stdout);
+
                 return EXIT_FAILURE;
             }
             fclose(original_stdout);
@@ -534,37 +569,133 @@ int execute(char **argv, Command *newCommand)
 
     }
     else{
-        if(newCommand -> background == 1){
+        if(newCommand -> background == 1 && turnOffBackground == 0){
+            signal(SIGINT, SIG_IGN);
+            
+            
             printf("Running in background. PID: %d\n", spawnPid);
+            fflush(stdout);
+            
+            backgroundProccessPid[numberBackground] = spawnPid;
+            backgroundProccessStatus[numberBackground] = child_status;
+            numberBackground += 1;
+           
         }
         else{
             waitpid(spawnPid, &child_status, 0);
-            if(WIFEXITED(child_status)){
-                printf("Child process exited with status: %d\n", WEXITSTATUS(child_status));
-            } else if (WIFSIGNALED(child_status)) {
-                printf("Child process terminated by signal: %d\n", WTERMSIG(child_status));
-            }
+            
+            
         }
-    return child_status;   
+        int childStatus;
+        for(int i = 0; i < numberBackground; i++){
+                
+                int result = waitpid(backgroundProccessPid[i], &childStatus, WNOHANG);
+                if(result != 0){
+                    if (WIFSIGNALED(childStatus)) {
+                        printf("Background process %d terminated by signal %d\n", backgroundProccessPid[i], WTERMSIG(childStatus));
+                        fflush(stdout);
+                        
+                        backgroundProccessPid[i] = backgroundProccessPid[i + 1];
+                        backgroundProccessStatus[i] = backgroundProccessStatus[i + 1];
+                        i -= 1;
+                        numberBackground -= 1;
+                    }
+                    else if(WIFEXITED(childStatus)){
+                        printf("Child %d exited normally with status %d\n", backgroundProccessPid[i], WEXITSTATUS(childStatus));
+                        fflush(stdout);
+                        backgroundProccessPid[i] = backgroundProccessPid[i + 1];
+                        backgroundProccessStatus[i] = backgroundProccessStatus[i + 1];
+                        i -= 1;
+                        numberBackground -= 1;
+                    }
+                }
+                
+                
+            }
+        return child_status;   
+    }
+}
+
+void expandVariables(Command *newCommand, char *str, int processId){
+
+    char pidStr[20];
+    sprintf(pidStr, "%d", getpid());
+    
+    char oldW[] = "$$";
+    char *pos, temp[1000];
+    int index = 0;
+    int owlen;
+ 
+    owlen = strlen(oldW);
+ 
+    // Repeat This loop until all occurrences are replaced.
+ 
+    while ((pos = strstr(str, oldW)) != NULL) {
+        // Bakup current line
+        strcpy(temp, str);
+ 
+        // Index of current found word
+        index = pos - str;
+ 
+        // Terminate str after word found index
+        str[index] = '\0';
+ 
+        // Concatenate str with new word
+        strcat(str, pidStr);
+ 
+        // Concatenate str with remaining words after
+        // oldword found index.
+        strcat(str, temp + index + owlen);
+    }
+    strcpy(newCommand -> fullCommand, str);
+    
+}
+void zhandler(){
+    if(turnOffBackground == 0){
+        
+        offFlag = 1;
+        turnOffBackground = 1;
+    }
+    else{
+       
+        onFlag = 1;
+        turnOffBackground = 0;
     }
 }
 
 void runningLoop()
 {
-
+    int processId = getpid();
     int status = 0;
-
+    
+    signal(SIGINT, SIG_IGN);
+    signal(SIGTSTP, zhandler);
     while (1)
     {
+         
         char full_command[2049];
         printf(": ");
+        if(onFlag == 1){
+            printf("Now Turning Off Background Process Functionality\n");
+            fflush(stdout);
+            onFlag = 0;
+            continue;
+        }
+        if(offFlag == 1){
+            printf("Now Returning Background Process Functionality\n");
+            fflush(stdout);
+            offFlag = 0;
+            continue;
+        }
+       
         gets(full_command);
         fflush(stdout);
         
+        
+
         Command *newCommand = malloc(sizeof(Command));
         strcpy(newCommand->fullCommand, full_command);
-
-        if (checkComment(full_command) == 1)
+        if (checkComment(newCommand -> fullCommand) == 1)
         {
             continue;
         }
@@ -573,8 +704,10 @@ void runningLoop()
         {
             continue;
         }
-
-        switch (checkBuiltInCommands(full_command))
+        expandVariables(newCommand, full_command, processId);
+        
+        int builtIns = checkBuiltInCommands(full_command);
+        switch (builtIns)
         {
         case -1:
             break;
@@ -586,14 +719,15 @@ void runningLoop()
             fflush(stdout);
             break;
         case 2:
-            chdir("./");
+            chdir(getenv("HOME"));
             break;
         case 3:
         {
             char dir[2049];
             int i = 3;
             int j = 0;
-            while (full_command[i] != '\0')
+           
+            while (full_command[i-1] != '\0')
             {
                 dir[j] = full_command[i];
                 j += 1;
@@ -601,7 +735,8 @@ void runningLoop()
             }
             j += 1;
             dir[j] = '\0';
-            printf("changing dir %d\n", chdir(dir));
+           
+            chdir(dir);
             char cwd[PATH_MAX];
             if (getcwd(cwd, sizeof(cwd)) != NULL)
             {
@@ -616,6 +751,22 @@ void runningLoop()
         default:
             break;
         }
+        if(builtIns == 0 || builtIns == 1 || builtIns == 2 || builtIns == 3){
+            continue;
+        }
+        if(onFlag == 1){
+            printf("Now Turning Off Background Process Functionality\n");
+            fflush(stdout);
+            onFlag = 0;
+            continue;
+        }
+        if(offFlag == 1){
+            printf("Now Returning Background Process Functionality\n");
+            fflush(stdout);
+            offFlag = 0;
+            continue;
+        }
+        
         parseCommand(full_command, newCommand);
         int numArgs = countArgument(newCommand->first);
         char *args[numArgs + 2];
@@ -628,32 +779,35 @@ void runningLoop()
             }
             else{
                 args[i] = getArgumentAtIndex(newCommand->first, i-1)->argument_text;
-                printf("ARGS at %d: %s\n", i, args[i]);
-                fflush(stdout);
+                
             }
         }
         args[0] = newCommand -> command;
         //strcpy(args[0], newCommand -> command);
         args[numArgs+1] = NULL;
 
-        for(int j = 0; j <= numArgs + 1; j++){
-            printf("Args: %s\n", args[j]);
-        }
-        //redirect input
-         int in_fd, out_fd;
-        FILE *original_stdin, *original_stdout;
-    
-        // Save original stdin and stdout
-        original_stdin = stdin;
-        original_stdout = stdout;
+       
 
         
         
         newCommand -> exitStatus = execute(args, newCommand);
         status = newCommand -> exitStatus;
-       
+        if(onFlag == 1){
+            printf("Now Turning Off Background Process Functionality\n");
+            fflush(stdout);
+            onFlag = 0;
+            continue;
+        }
+        if(offFlag == 1){
+            printf("Now Returning Background Process Functionality\n");
+            fflush(stdout);
+            offFlag = 0;
+            continue;
+        }
+        
       
        
+       fflush(stdout);
         
     }
 }
